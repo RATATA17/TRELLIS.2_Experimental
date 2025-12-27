@@ -1,3 +1,18 @@
+# Experimental / local patches
+extract_worker.py
+app_patched*.py
+*_patched.py
+tmp/
+
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# Local-only files
+.env
+AGENTS.local.md
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
