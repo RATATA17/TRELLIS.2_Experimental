@@ -1,7 +1,12 @@
 # Experimental / local patches
+app_patched.py
+app_patched_fastpreview.py
+app_patched_gallery.py
+app_patched_gallery_purge.py
+app_patched_gallery_subprocess_fixed.py
+app_patched_gallery_subprocess_fixed2.py
 extract_worker.py
-app_patched*.py
-*_patched.py
+extract_worker_patched.py
 tmp/
 
 # Python
