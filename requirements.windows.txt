@@ -1,0 +1,3 @@
+# Windows-only packages that can be installed via pip resolver.
+https://huggingface.co/datasets/Softology-Pro/VoC/resolve/main/flash_attn-2.7.4.post1-cp310-cp310-win_amd64.whl
+triton-windows==3.5.0.post21
