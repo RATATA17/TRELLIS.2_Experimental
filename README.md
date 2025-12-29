@@ -1,3 +1,20 @@
+# 追記：Win11 + RTX4090 環境の実験的実装について
+
+このリポジトリは **Windows 11 / RTX4090** 環境向けに、実験的な変更を加えています。  
+オリジナルの TRELLIS.2 とは挙動が一部異なるため、以下を前提として参照してください。
+
+## 変更点（機能面の大きな差分）
+- **ワーカー分離**：Generate/Extract をサブプロセス化し、メモリ挙動を安定化
+- **Extract 常駐ワーカー**：連続 Extract の高速化（初回ロード後は再ロードを省略）
+
+※その他は QoL / デバッグ用の追加（進捗・ログ・ベンチなど）
+
+対応モジュール（主な改造ポイント）:
+- UI/オーケストレーション: `app_patched_gallery_subprocess_fixed3.py`
+- Generate ワーカー: `generate_worker_patched.py`
+- Extract 常駐ワーカー: `extract_worker_pool.py`
+- ログ強化/リソース計測: `app_patched_gallery_subprocess_fixed3.py`, `generate_worker_patched.py`, `extract_worker_pool.py`
+
 ![](assets/teaser.webp)
 
 # Native and Compact Structured Latents for 3D Generation
