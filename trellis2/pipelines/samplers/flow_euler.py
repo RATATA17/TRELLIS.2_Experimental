@@ -1,3 +1,4 @@
+# File: trellis2/pipelines/samplers/flow_euler.py
 # trellis2/pipelines/samplers/flow_euler.py
 from typing import *
 import torch

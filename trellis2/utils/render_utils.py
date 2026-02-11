@@ -1,3 +1,4 @@
+# File: trellis2/utils/render_utils.py
 # trellis2/utils/render_utils.py
 import torch
 import numpy as np

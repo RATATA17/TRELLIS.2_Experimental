@@ -1,3 +1,4 @@
+# File: setup.py
 from setuptools import setup, find_packages
 
 # Basic dependencies, corresponds to the --basic flag in your script.

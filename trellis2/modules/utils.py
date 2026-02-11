@@ -1,3 +1,4 @@
+# File: trellis2/modules/utils.py
 # trellis2/modules/utils.py
 import torch
 import torch.nn as nn

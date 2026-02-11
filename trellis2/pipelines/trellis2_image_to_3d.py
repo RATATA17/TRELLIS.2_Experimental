@@ -1,3 +1,4 @@
+# File: trellis2/pipelines/trellis2_image_to_3d.py
 # trellis2/pipelines/trellis2_image_to_3d.py
 from typing import *
 import torch

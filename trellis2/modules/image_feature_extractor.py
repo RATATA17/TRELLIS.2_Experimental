@@ -1,3 +1,4 @@
+# File: trellis2/modules/image_feature_extractor.py
 # trellis2/modules/image_feature_extractor.py
 import os
 from typing import *

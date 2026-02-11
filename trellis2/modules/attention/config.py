@@ -1,3 +1,4 @@
+# File: trellis2/modules/attention/config.py
 # trellis2/modules/attention/config.py
 from typing import *
 

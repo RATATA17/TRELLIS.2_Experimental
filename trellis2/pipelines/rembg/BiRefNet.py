@@ -1,3 +1,4 @@
+# File: trellis2/pipelines/rembg/BiRefNet.py
 # trellis2/pipelines/rembg/BiRefNet.py
 from typing import *
 from transformers import AutoModelForImageSegmentation
