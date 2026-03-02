@@ -5,6 +5,10 @@ import gradio as gr
 import os
 import sys
 
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+from tools.profiling_wrapper import AuraProfiler
+from tools.sync_hunter import hunt_syncs
+
 try:
     print("[INFO] Patching flex_gemm for Windows compatibility...")
     import flex_gemm.ops.spconv as spconv
@@ -384,39 +388,57 @@ def image_to_3d(
     tex_slat_guidance_rescale: float,
     tex_slat_sampling_steps: int,
     tex_slat_rescale_t: float,
+    enable_profiling: bool,
+    enable_sync_hunter: bool,
     req: gr.Request,
     progress=gr.Progress(track_tqdm=True),
 ) -> str:
-    # --- Sampling ---
-    outputs, latents = pipeline.run(
-        image,
-        seed=seed,
-        preprocess_image=False,
-        sparse_structure_sampler_params={
-            "steps": ss_sampling_steps,
-            "guidance_strength": ss_guidance_strength,
-            "guidance_rescale": ss_guidance_rescale,
-            "rescale_t": ss_rescale_t,
-        },
-        shape_slat_sampler_params={
-            "steps": shape_slat_sampling_steps,
-            "guidance_strength": shape_slat_guidance_strength,
-            "guidance_rescale": shape_slat_guidance_rescale,
-            "rescale_t": shape_slat_rescale_t,
-        },
-        tex_slat_sampler_params={
-            "steps": tex_slat_sampling_steps,
-            "guidance_strength": tex_slat_guidance_strength,
-            "guidance_rescale": tex_slat_guidance_rescale,
-            "rescale_t": tex_slat_rescale_t,
-        },
-        pipeline_type={
-            "512": "512",
-            "1024": "1024_cascade",
-            "1536": "1536_cascade",
-        }[resolution],
-        return_latent=True,
+    # --- Profiling Setup ---
+    prof_dir = os.path.join(TMP_DIR, "profiling")
+    profiler = AuraProfiler(
+        log_dir=prof_dir,
+        actor_name="", # Empty string writes directly to log_dir
+        enabled=enable_profiling,
+        schedule_config={"wait": 0, "warmup": 0, "active": 1, "repeat": 0}
     )
+    
+    with hunt_syncs(enabled=enable_sync_hunter, log_file=os.path.join(prof_dir, "sync_report.txt")):
+        profiler.start()
+        
+        # --- Sampling ---
+        outputs, latents = pipeline.run(
+            image,
+            seed=seed,
+            preprocess_image=False,
+            sparse_structure_sampler_params={
+                "steps": ss_sampling_steps,
+                "guidance_strength": ss_guidance_strength,
+                "guidance_rescale": ss_guidance_rescale,
+                "rescale_t": ss_rescale_t,
+            },
+            shape_slat_sampler_params={
+                "steps": shape_slat_sampling_steps,
+                "guidance_strength": shape_slat_guidance_strength,
+                "guidance_rescale": shape_slat_guidance_rescale,
+                "rescale_t": shape_slat_rescale_t,
+            },
+            tex_slat_sampler_params={
+                "steps": tex_slat_sampling_steps,
+                "guidance_strength": tex_slat_guidance_strength,
+                "guidance_rescale": tex_slat_guidance_rescale,
+                "rescale_t": tex_slat_rescale_t,
+            },
+            pipeline_type={
+                "512": "512",
+                "1024": "1024_cascade",
+                "1536": "1536_cascade",
+            }[resolution],
+            return_latent=True,
+        )
+        
+        profiler.step() # Advancing step ends "active" phase, flushing trace
+        profiler.stop_and_save("inference_run")
+
     mesh = outputs[0]
     mesh.simplify(16777216) # nvdiffrast limit
     images = render_utils.render_snapshot(mesh, resolution=1024, r=2, fov=36, nviews=STEPS, envmap=envmap)
@@ -573,6 +595,11 @@ with gr.Blocks(delete_cache=(600, 600)) as demo:
                     tex_slat_sampling_steps = gr.Slider(1, 50, label="Sampling Steps", value=12, step=1)
                     tex_slat_rescale_t = gr.Slider(1.0, 6.0, label="Rescale T", value=3.0, step=0.1)                
 
+            with gr.Accordion(label="Debugging & Profiling", open=False):
+                gr.Markdown("Performance profiles and sync logs will be stored in `./tmp/profiling`.")
+                enable_profiling = gr.Checkbox(label="Enable Performance Profiler", value=False)
+                enable_sync_hunter = gr.Checkbox(label="Enable CUDA Sync Hunter", value=False)
+
         with gr.Column(scale=10):
             with gr.Walkthrough(selected=0) as walkthrough:
                 with gr.Step("Preview", id=0):
@@ -621,6 +648,7 @@ with gr.Blocks(delete_cache=(600, 600)) as demo:
             ss_guidance_strength, ss_guidance_rescale, ss_sampling_steps, ss_rescale_t,
             shape_slat_guidance_strength, shape_slat_guidance_rescale, shape_slat_sampling_steps, shape_slat_rescale_t,
             tex_slat_guidance_strength, tex_slat_guidance_rescale, tex_slat_sampling_steps, tex_slat_rescale_t,
+            enable_profiling, enable_sync_hunter,
         ],
         outputs=[output_buf, preview_output],
     )

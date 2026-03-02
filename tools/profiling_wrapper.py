@@ -1,12 +1,11 @@
-# src/rl_agent/utils/profiling_wrapper.py
 import time
 import os
 import logging
 import torch
 from torch.profiler import profile, record_function, ProfilerActivity
 
-# Reuse your existing processor from the World Model
-from world_model.utils.profiler_python_utils import process_profile_json,  process_torch_trace_json
+# Reuse your existing processor from the local tools package
+from tools.profiler_python_utils import process_profile_json, process_torch_trace_json
 
 logger = logging.getLogger(__name__)
 

@@ -4,8 +4,9 @@
     "\\assets",
     "\\MODELS",
     "\\o-voxel",
-    "\\trellis2"
+    "\\trellis2",
+    "\\trellis2\\modules"
   ],
-  "SelectedNode": "\\assets",
+  "SelectedNode": "\\app.py",
   "PreviewInSolutionExplorer": false
 }
