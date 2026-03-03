@@ -27,18 +27,23 @@ class DinoV2FeatureExtractor:
 
         self.model = DINOv3ViTModel.from_pretrained(model_to_load)
         self.model.eval()
-        self.transform = transforms.Compose([
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-        ])
+        self._norm_mean = torch.tensor([0.485, 0.456, 0.406], dtype=torch.float32).view(1, 3, 1, 1)
+        self._norm_std = torch.tensor([0.229, 0.224, 0.225], dtype=torch.float32).view(1, 3, 1, 1)
 
     def to(self, device):
         self.model.to(device)
+        self._norm_mean = self._norm_mean.to(device)
+        self._norm_std = self._norm_std.to(device)
 
     def cuda(self):
         self.model.cuda()
+        self._norm_mean = self._norm_mean.cuda()
+        self._norm_std = self._norm_std.cuda()
 
     def cpu(self):
         self.model.cpu()
+        self._norm_mean = self._norm_mean.cpu()
+        self._norm_std = self._norm_std.cpu()
     
     @torch.no_grad()
     def __call__(self, image: Union[torch.Tensor, List[Image.Image]]) -> torch.Tensor:
@@ -62,7 +67,7 @@ class DinoV2FeatureExtractor:
         else:
             raise ValueError(f"Unsupported type of image: {type(image)}")
         
-        image = self.transform(image).cuda()
+        image = (image - self._norm_mean) / self._norm_std
         features = self.model(image, is_training=True)['x_prenorm']
         patchtokens = F.layer_norm(features, features.shape[-1:])
         return patchtokens
@@ -105,18 +110,23 @@ class DinoV3FeatureExtractor:
         
         self.model.eval()
         self.image_size = image_size
-        self.transform = transforms.Compose([
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-        ])
+        self._norm_mean = torch.tensor([0.485, 0.456, 0.406], dtype=torch.float32).view(1, 3, 1, 1)
+        self._norm_std = torch.tensor([0.229, 0.224, 0.225], dtype=torch.float32).view(1, 3, 1, 1)
 
     def to(self, device):
         self.model.to(device)
+        self._norm_mean = self._norm_mean.to(device)
+        self._norm_std = self._norm_std.to(device)
 
     def cuda(self):
         self.model.cuda()
+        self._norm_mean = self._norm_mean.cuda()
+        self._norm_std = self._norm_std.cuda()
 
     def cpu(self):
         self.model.cpu()
+        self._norm_mean = self._norm_mean.cpu()
+        self._norm_std = self._norm_std.cpu()
 
     def extract_features(self, image: torch.Tensor) -> torch.Tensor:
         image = image.to(self.model.embeddings.patch_embeddings.weight.dtype)
@@ -153,6 +163,6 @@ class DinoV3FeatureExtractor:
         else:
             raise ValueError(f"Unsupported type of image: {type(image)}")
         
-        image = self.transform(image).cuda()
+        image = (image - self._norm_mean) / self._norm_std
         features = self.extract_features(image)
         return features

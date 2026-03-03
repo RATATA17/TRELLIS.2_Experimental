@@ -165,11 +165,7 @@ class Trellis2ImageTo3DPipeline(Pipeline):
             dict: The conditioning information
         """
         self.image_cond_model.image_size = resolution
-        if self.low_vram:
-            self.image_cond_model.to(self.device)
         cond = self.image_cond_model(image)
-        if self.low_vram:
-            self.image_cond_model.cpu()
         if not include_neg_cond:
             return {'cond': cond}
         neg_cond = torch.zeros_like(cond)
@@ -198,7 +194,7 @@ class Trellis2ImageTo3DPipeline(Pipeline):
         flow_model = self.models['sparse_structure_flow_model']
         reso = flow_model.resolution
         in_channels = flow_model.in_channels
-        noise = torch.randn(num_samples, in_channels, reso, reso, reso).to(self.device)
+        noise = torch.randn(num_samples, in_channels, reso, reso, reso, device=self.device)
         sampler_params = {**self.sparse_structure_sampler_params, **sampler_params}
         if self.low_vram:
             flow_model.to(self.device)
@@ -261,8 +257,8 @@ class Trellis2ImageTo3DPipeline(Pipeline):
         if self.low_vram:
             flow_model.cpu()
 
-        std = torch.tensor(self.shape_slat_normalization['std'])[None].to(slat.device)
-        mean = torch.tensor(self.shape_slat_normalization['mean'])[None].to(slat.device)
+        std = torch.tensor(self.shape_slat_normalization['std'], device=slat.device)[None]
+        mean = torch.tensor(self.shape_slat_normalization['mean'], device=slat.device)[None]
         slat = slat * std + mean
         
         return slat
@@ -305,8 +301,8 @@ class Trellis2ImageTo3DPipeline(Pipeline):
         ).samples
         if self.low_vram:
             flow_model_lr.cpu()
-        std = torch.tensor(self.shape_slat_normalization['std'])[None].to(slat.device)
-        mean = torch.tensor(self.shape_slat_normalization['mean'])[None].to(slat.device)
+        std = torch.tensor(self.shape_slat_normalization['std'], device=slat.device)[None]
+        mean = torch.tensor(self.shape_slat_normalization['mean'], device=slat.device)[None]
         slat = slat * std + mean
         
         # Upsample
@@ -350,8 +346,8 @@ class Trellis2ImageTo3DPipeline(Pipeline):
         if self.low_vram:
             flow_model.cpu()
 
-        std = torch.tensor(self.shape_slat_normalization['std'])[None].to(slat.device)
-        mean = torch.tensor(self.shape_slat_normalization['mean'])[None].to(slat.device)
+        std = torch.tensor(self.shape_slat_normalization['std'], device=slat.device)[None]
+        mean = torch.tensor(self.shape_slat_normalization['mean'], device=slat.device)[None]
         slat = slat * std + mean
         
         return slat, hr_resolution
@@ -398,8 +394,8 @@ class Trellis2ImageTo3DPipeline(Pipeline):
             sampler_params (dict): Additional parameters for the sampler.
         """
         # Sample structured latent
-        std = torch.tensor(self.shape_slat_normalization['std'])[None].to(shape_slat.device)
-        mean = torch.tensor(self.shape_slat_normalization['mean'])[None].to(shape_slat.device)
+        std = torch.tensor(self.shape_slat_normalization['std'], device=shape_slat.device)[None]
+        mean = torch.tensor(self.shape_slat_normalization['mean'], device=shape_slat.device)[None]
         shape_slat = (shape_slat - mean) / std
 
         in_channels = flow_model.in_channels if isinstance(flow_model, nn.Module) else flow_model[0].in_channels
@@ -419,8 +415,8 @@ class Trellis2ImageTo3DPipeline(Pipeline):
         if self.low_vram:
             flow_model.cpu()
 
-        std = torch.tensor(self.tex_slat_normalization['std'])[None].to(slat.device)
-        mean = torch.tensor(self.tex_slat_normalization['mean'])[None].to(slat.device)
+        std = torch.tensor(self.tex_slat_normalization['std'], device=slat.device)[None]
+        mean = torch.tensor(self.tex_slat_normalization['mean'], device=slat.device)[None]
         slat = slat * std + mean
         
         return slat
@@ -531,8 +527,12 @@ class Trellis2ImageTo3DPipeline(Pipeline):
         if preprocess_image:
             image = self.preprocess_image(image)
         torch.manual_seed(seed)
+        if self.low_vram:
+            self.image_cond_model.to(self.device)
         cond_512 = self.get_cond([image], 512)
         cond_1024 = self.get_cond([image], 1024) if pipeline_type != '512' else None
+        if self.low_vram:
+            self.image_cond_model.cpu()
         ss_res = {'512': 32, '1024': 64, '1024_cascade': 32, '1536_cascade': 32}[pipeline_type]
         coords = self.sample_sparse_structure(
             cond_512, ss_res,
