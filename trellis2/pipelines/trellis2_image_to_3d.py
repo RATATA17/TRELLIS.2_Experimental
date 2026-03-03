@@ -585,6 +585,11 @@ class Trellis2ImageTo3DPipeline(Pipeline):
             )
         torch.cuda.empty_cache()
         out_mesh = self.decode_latent(shape_slat, tex_slat, res)
+        # Offload decoders after decode — no longer needed, frees VRAM for rendering
+        for name, model in self.models.items():
+            if 'decoder' in name:
+                model.cpu()
+        torch.cuda.empty_cache()
         if return_latent:
             return out_mesh, (shape_slat, tex_slat, res)
         else:
