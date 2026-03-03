@@ -146,6 +146,10 @@ def _worker_main(cmd_queue, result_queue):
                 )
                 tex_slat = shape_slat.replace(torch.from_numpy(state['tex_slat_feats']).cuda())
                 res = state['res']
+                # Decoders were offloaded to CPU at end of run(), move them back
+                for name, model in pipeline.models.items():
+                    if 'decoder' in name:
+                        model.cuda()
                 mesh = pipeline.decode_latent(shape_slat, tex_slat, res)[0]
                 glb = o_voxel.postprocess.to_glb(
                     vertices=mesh.vertices,
