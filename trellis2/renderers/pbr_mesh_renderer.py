@@ -137,14 +137,15 @@ def screen_space_ambient_occlusion(
     
     # start sampling
     for _ in range(samples):
-        # sample normal distribution, if inside, flip the sign
-        rnd_vec = torch.randn(H, W, 3, device=device)
-        rnd_vec = F.normalize(rnd_vec, p=2, dim=-1)
-        dot_val = torch.sum(rnd_vec * normal, dim=-1, keepdim=True)
+        rnd_vec = torch.randn(H, W, 3, device=device, dtype=torch.float16)
+        rnd_vec = F.normalize(rnd_vec, p=2.0, dim=-1)
+        dot_val = torch.sum(rnd_vec * normal.half(), dim=-1, keepdim=True)
         sample_dir = torch.sign(dot_val) * rnd_vec
-        scale = torch.rand(H, W, 1, device=device)
+        
+        scale = torch.rand(H, W, 1, device=device, dtype=torch.float16)
         scale = scale * scale
-        sample_pos = view_pos + sample_dir * radius * scale
+        
+        sample_pos = view_pos + (sample_dir * radius * scale).float()
         sample_z = sample_pos[..., 2]
         
         # project to screen space

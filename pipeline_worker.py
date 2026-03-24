@@ -30,8 +30,15 @@ def _apply_patches():
                 def indice_weighed_sum_fwd(feats, indices, weights):
                     N = feats.shape[0]
                     idx = indices.long().clamp(min=0, max=N - 1)  # [M, 8]
-                    gathered = feats[idx]  # [M, 8, C]
-                    return (gathered * weights.unsqueeze(-1)).sum(dim=1)  # [M, C]
+                    
+                    M_shape, K = idx.shape
+                    C = feats.shape[-1]
+                    
+                    # Accumulate sequentially to avoid a massive [M, K, C] memory spike
+                    out = torch.zeros((M_shape, C), dtype=feats.dtype, device=feats.device)
+                    for i in range(K):
+                        out += feats[idx[:, i]] * weights[:, i].unsqueeze(-1)
+                    return out
 
                 @staticmethod
                 def indice_weighed_sum_bwd_input(grad_output, indices, weights, N):
@@ -141,10 +148,15 @@ def _worker_main(cmd_queue, result_queue):
                 profiler.stop_and_save("inference_run")
                 mesh = outputs[0]
                 mesh.simplify(16777216)  # nvdiffrast limit
-                images = render_utils.render_snapshot(
-                    mesh, resolution=1024, r=2, fov=36,
-                    nviews=cmd["nviews"], envmap=envmap
-                )
+                
+                with torch.inference_mode():
+                    images = render_utils.render_snapshot(
+                        mesh, 
+                        resolution=512,
+                        r=2, fov=36,
+                        nviews=cmd["nviews"], 
+                        envmap=envmap
+                    )
                 shape_slat, tex_slat, res = latents
                 state = {
                     'shape_slat_feats': shape_slat.feats.cpu().numpy(),
@@ -167,11 +179,9 @@ def _worker_main(cmd_queue, result_queue):
                 )
                 tex_slat = shape_slat.replace(torch.from_numpy(state['tex_slat_feats']).cuda())
                 res = state['res']
-                # Decoders were offloaded to CPU at end of run(), move them back
-                for name, model in pipeline.models.items():
-                    if 'decoder' in name:
-                        model.cuda()
+                
                 mesh = pipeline.decode_latent(shape_slat, tex_slat, res)[0]
+                
                 glb = o_voxel.postprocess.to_glb(
                     vertices=mesh.vertices,
                     faces=mesh.faces,
