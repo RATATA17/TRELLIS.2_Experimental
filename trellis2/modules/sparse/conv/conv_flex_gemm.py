@@ -41,25 +41,48 @@ def sparse_conv3d_forward(self, x: SparseTensor) -> SparseTensor:
     flex_gemm.ops.spconv.set_algorithm(Algorithm.EXPLICIT_GEMM)
     flex_gemm.ops.spconv.set_hashmap_ratio(config.FLEX_GEMM_HASHMAP_RATIO)
 
-    # check if neighbor map is already computed
     Co, Kd, Kh, Kw, Ci = self.weight.shape
+    V = Kd * Kh * Kw
     neighbor_cache_key = f'SubMConv3d_neighbor_cache_{Kw}x{Kh}x{Kd}_dilation{self.dilation}'
     neighbor_cache = x.get_spatial_cache(neighbor_cache_key)
-    
-    out, neighbor_cache_ = sparse_submanifold_conv3d(
-        x.feats,
-        x.coords,
-        torch.Size([*x.shape, *x.spatial_shape]),
-        self.weight,
-        self.bias,
-        neighbor_cache,
-        self.dilation
-    )
-    
+
+    # Build neighbor cache if not available (uses CUDA kernels, no Triton needed)
     if neighbor_cache is None:
-        x.register_spatial_cache(neighbor_cache_key, neighbor_cache_)
-    
-    out = x.replace(out)
+        from flex_gemm.ops.spconv.submanifold_conv3d import SubMConv3dFunction
+        neighbor_cache = SubMConv3dFunction._compute_neighbor_cache(
+            x.coords,
+            torch.Size([*x.shape, *x.spatial_shape]),
+            (Kw, Kh, Kd),
+            self.dilation
+        )
+        x.register_spatial_cache(neighbor_cache_key, neighbor_cache)
+
+    # Chunked im2col + GEMM to cap peak VRAM
+    feats = x.feats
+    N = feats.shape[0]
+    neighbor_map = neighbor_cache['neighbor_map']
+    weight_mat = self.weight.reshape(Co, V * Ci).t()  # [V*Ci, Co]
+
+    # Keep each chunk's im2col buffer under ~768MB
+    im2col_bytes_per_voxel = V * Ci * feats.element_size()
+    CHUNK = max(1024, (768 * 1024 * 1024) // im2col_bytes_per_voxel)
+
+    output = torch.empty((N, Co), device=feats.device, dtype=feats.dtype)
+    for start in range(0, N, CHUNK):
+        end = min(start + CHUNK, N)
+        chunk_map = neighbor_map[start:end]             # [chunk_n, V]
+        chunk_n = end - start
+        chunk_im2col = torch.zeros((chunk_n * V, Ci), device=feats.device, dtype=feats.dtype)
+        flat_map = chunk_map.reshape(-1).long()
+        mask = flat_map != 0xffffffff
+        chunk_im2col[mask] = feats[flat_map[mask]]
+        chunk_im2col = chunk_im2col.view(chunk_n, V * Ci)
+        if self.bias is not None:
+            output[start:end] = torch.addmm(self.bias, chunk_im2col, weight_mat)
+        else:
+            output[start:end] = torch.mm(chunk_im2col, weight_mat)
+
+    out = x.replace(output)
     return out
 
 

@@ -146,8 +146,25 @@ def _worker_main(cmd_queue, result_queue):
                     )
                     profiler.step()
                 profiler.stop_and_save("inference_run")
+                def _vram_mb():
+                    return torch.cuda.memory_allocated() / (1024**2)
+                print(f"[VRAM] After pipeline.run: allocated={_vram_mb():.0f}MB")
                 mesh = outputs[0]
+                
+                # Move latents to CPU BEFORE rendering to free VRAM
+                shape_slat, tex_slat, res = latents
+                state = {
+                    'shape_slat_feats': shape_slat.feats.cpu().numpy(),
+                    'tex_slat_feats': tex_slat.feats.cpu().numpy(),
+                    'coords': shape_slat.coords.cpu().numpy(),
+                    'res': res,
+                }
+                del latents, shape_slat, tex_slat, outputs
+                print(f"[VRAM] After latent offload: allocated={_vram_mb():.0f}MB")
+                torch.cuda.empty_cache()
+                
                 mesh.simplify(16777216)  # nvdiffrast limit
+                print(f"[VRAM] After simplify: allocated={_vram_mb():.0f}MB")
                 
                 with torch.inference_mode():
                     images = render_utils.render_snapshot(
@@ -157,13 +174,7 @@ def _worker_main(cmd_queue, result_queue):
                         nviews=cmd["nviews"], 
                         envmap=envmap
                     )
-                shape_slat, tex_slat, res = latents
-                state = {
-                    'shape_slat_feats': shape_slat.feats.cpu().numpy(),
-                    'tex_slat_feats': tex_slat.feats.cpu().numpy(),
-                    'coords': shape_slat.coords.cpu().numpy(),
-                    'res': res,
-                }
+                print(f"[VRAM] After render: allocated={_vram_mb():.0f}MB")
                 torch.cuda.empty_cache()
                 result_queue.put({"status": "ok", "state": state, "images": images})
             except Exception as e:
@@ -181,6 +192,7 @@ def _worker_main(cmd_queue, result_queue):
                 res = state['res']
                 
                 mesh = pipeline.decode_latent(shape_slat, tex_slat, res)[0]
+                mesh.attrs = mesh.attrs.float()
                 
                 glb = o_voxel.postprocess.to_glb(
                     vertices=mesh.vertices,

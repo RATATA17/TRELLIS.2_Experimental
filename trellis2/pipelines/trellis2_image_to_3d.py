@@ -348,7 +348,7 @@ class Trellis2ImageTo3DPipeline(Pipeline):
             ], dim=1)
             coords = quant_coords.unique(dim=0)
             num_tokens = coords.shape[0]
-            if num_tokens < max_num_tokens or hr_resolution == 1024:
+            if num_tokens < max_num_tokens or hr_resolution <= 512:
                 if hr_resolution != resolution:
                     print(f"Due to the limited number of tokens, the resolution is reduced to {hr_resolution}.")
                 break
@@ -478,39 +478,48 @@ class Trellis2ImageTo3DPipeline(Pipeline):
     ) -> List[MeshWithVoxel]:
         """
         Decode the latent codes.
-
-        Args:
-            shape_slat (SparseTensor): The structured latent for shape.
-            tex_slat (SparseTensor): The structured latent for texture.
-            resolution (int): The resolution of the output.
         """
         # 1. Load shape decoder, run, and clear
+        shape_dec = self.models['shape_slat_decoder']
+        if shape_dec.dtype != torch.float16:
+            shape_dec.convert_to_fp16()
+            shape_dec.dtype = torch.float16
         if self.low_vram:
-            self.models['shape_slat_decoder'].to(self.device)
-            
+            shape_dec.to(self.device)
+        
+        torch.cuda.reset_peak_memory_stats()
         meshes, subs = self.decode_shape_slat(shape_slat, resolution)
+        print(f"[VRAM] shape decode PEAK={torch.cuda.max_memory_allocated()/(1024**2):.0f}MB")
+        free, total = torch.cuda.mem_get_info()
+        print(f"[VRAM] driver used={(total-free)/(1024**2):.0f}MB")
         
-        # Cleanup: The shape_slat input is no longer needed after decoding
         del shape_slat
-        
         if self.low_vram:
-            self.models['shape_slat_decoder'].cpu()
-            torch.cuda.empty_cache()
+            shape_dec.cpu()
+        torch.cuda.empty_cache()
 
         # 2. Load texture decoder, run, and clear
+        tex_dec = self.models['tex_slat_decoder']
+        if tex_dec.dtype != torch.float16:
+            tex_dec.convert_to_fp16()
+            tex_dec.dtype = torch.float16
         if self.low_vram:
-            self.models['tex_slat_decoder'].to(self.device)
-            
-        tex_voxels = self.decode_tex_slat(tex_slat, subs)
+            tex_dec.to(self.device)
         
-        # Cleanup: Both the texture latent and the massive intermediate 'subs' 
-        # guide tensors must be destroyed before starting the mesh assembly and rendering
+        # Move subs back to GPU just before use
+        subs = [s.to(self.device) for s in subs]
+
+        torch.cuda.reset_peak_memory_stats()
+        tex_voxels = self.decode_tex_slat(tex_slat, subs)
+        print(f"[VRAM] tex decode PEAK={torch.cuda.max_memory_allocated()/(1024**2):.0f}MB")
+        free, total = torch.cuda.mem_get_info()
+        print(f"[VRAM] driver used={(total-free)/(1024**2):.0f}MB")
+        
         del tex_slat
         del subs
-        
         if self.low_vram:
-            self.models['tex_slat_decoder'].cpu()
-            torch.cuda.empty_cache()
+            tex_dec.cpu()
+        torch.cuda.empty_cache()
 
         # 3. Assemble meshes
         out_mesh = []
@@ -521,8 +530,8 @@ class Trellis2ImageTo3DPipeline(Pipeline):
                     m.vertices, m.faces,
                     origin = [-0.5, -0.5, -0.5],
                     voxel_size = 1 / resolution,
-                    coords = v.coords[:, 1:],
-                    attrs = v.feats,
+                    coords = v.coords[:, 1:],  # Native int32 is safe here
+                    attrs = v.feats.half(),    # Compress the final output to FP16 for the Rendering phase
                     voxel_shape = torch.Size([*v.shape, *v.spatial_shape]),
                     layout=self.pbr_attr_layout
                 )
