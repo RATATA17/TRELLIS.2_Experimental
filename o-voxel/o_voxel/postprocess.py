@@ -141,8 +141,6 @@ def to_glb(
     # DIAGNOSTIC: What's on GPU right now?
     print(f"[DIAG] vertices: {vertices.shape}, faces: {faces.shape}, device={vertices.device}")
     print(f"[DIAG] VRAM allocated: {torch.cuda.memory_allocated()/(1024**2):.0f}MB, reserved: {torch.cuda.memory_reserved()/(1024**2):.0f}MB")
-    import time
-    time.sleep(10) #MODIF
     
     # --- Branch 1: Standard Pipeline (Simplification & Cleaning) ---
     if not remesh:
@@ -204,10 +202,19 @@ def to_glb(
         if verbose:
             print(f"After remeshing: {mesh.num_vertices} vertices, {mesh.num_faces} faces")
         
-        # Simplify and clean the remeshed result (similar logic to above)
+        # Simplify and clean the remeshed result
         mesh.simplify(decimation_target, verbose=verbose)
         if verbose:
             print(f"After simplifying: {mesh.num_vertices} vertices, {mesh.num_faces} faces")
+        
+        # Clean up topology — remove stray triangles, hairs, and non-manifold edges
+        mesh.remove_duplicate_faces()
+        mesh.repair_non_manifold_edges()
+        mesh.remove_small_connected_components(1e-5)
+        mesh.fill_holes(max_hole_perimeter=3e-2)
+        mesh.unify_face_orientations()
+        if verbose:
+            print(f"After cleanup: {mesh.num_vertices} vertices, {mesh.num_faces} faces")
     
     if use_tqdm:
         pbar.update(1)
@@ -220,6 +227,21 @@ def to_glb(
         pbar.set_description("Parameterizing new mesh")
     if verbose:
         print("Parameterizing new mesh...")
+    
+    # Remove degenerate (zero-area) faces that cause xatlas normal assertion failures
+    verts_tmp, faces_tmp = mesh.read()
+    v0 = verts_tmp[faces_tmp[:, 0]]
+    v1 = verts_tmp[faces_tmp[:, 1]]
+    v2 = verts_tmp[faces_tmp[:, 2]]
+    face_areas = torch.cross(v1 - v0, v2 - v0, dim=1).norm(dim=1)
+    degenerate = face_areas < 1e-10
+    if degenerate.any():
+        good_faces = faces_tmp[~degenerate]
+        mesh = cumesh.CuMesh()
+        mesh.init(verts_tmp, good_faces)
+        if verbose:
+            print(f"Removed {degenerate.sum().item()} degenerate faces")
+    del verts_tmp, faces_tmp, v0, v1, v2, face_areas, degenerate
     
     out_vertices, out_faces, out_uvs, out_vmaps = mesh.uv_unwrap(
         compute_charts_kwargs={

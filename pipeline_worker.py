@@ -224,8 +224,11 @@ def _worker_main(cmd_queue, result_queue):
                     use_tqdm=True,
                 )
                 glb.export(cmd["glb_path"], extension_webp=True)
-                del mesh
+                del mesh, glb
                 torch.cuda.empty_cache()
+                # Flush any lingering CUDA errors (e.g. from xatlas assertions)
+                # so they don't poison subsequent kernel launches
+                torch.cuda.synchronize()
                 
                 # Reload envmaps back to GPU for next render cycle
                 for env in envmap.values():
