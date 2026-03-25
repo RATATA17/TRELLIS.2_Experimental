@@ -489,7 +489,7 @@ class Trellis2ImageTo3DPipeline(Pipeline):
         
         torch.cuda.reset_peak_memory_stats()
         meshes, subs = self.decode_shape_slat(shape_slat, resolution)
-        print(f"[VRAM] shape decode PEAK={torch.cuda.max_memory_allocated()/(1024**2):.0f}MB")
+        print(f"[VRAM] shape decode PEAK={torch.cuda.max_memory_allocated()/(1024**2):.0f}MB, reserved={torch.cuda.memory_reserved()/(1024**2):.0f}MB")
         free, total = torch.cuda.mem_get_info()
         print(f"[VRAM] driver used={(total-free)/(1024**2):.0f}MB")
         
@@ -497,6 +497,9 @@ class Trellis2ImageTo3DPipeline(Pipeline):
         if self.low_vram:
             shape_dec.cpu()
         torch.cuda.empty_cache()
+
+        # Offload subs to CPU between decoder phases
+        subs = [s.to('cpu') for s in subs]
 
         # 2. Load texture decoder, run, and clear
         tex_dec = self.models['tex_slat_decoder']

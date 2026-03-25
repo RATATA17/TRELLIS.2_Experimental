@@ -60,7 +60,7 @@ def _apply_patches():
 def _worker_main(cmd_queue, result_queue):
     """Worker process main loop. Owns the pipeline and all GPU resources."""
     os.environ["TORCHDYNAMO_DISABLE"] = "1"
-    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "garbage_collection_threshold:0.65"
     os.environ['OPENCV_IO_ENABLE_OPENEXR'] = '1'
 
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

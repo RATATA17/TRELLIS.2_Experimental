@@ -65,7 +65,7 @@ def sparse_conv3d_forward(self, x: SparseTensor) -> SparseTensor:
 
     # Keep each chunk's im2col buffer under ~768MB
     im2col_bytes_per_voxel = V * Ci * feats.element_size()
-    CHUNK = max(1024, (768 * 1024 * 1024) // im2col_bytes_per_voxel)
+    CHUNK = max(1024, (128 * 1024 * 1024) // im2col_bytes_per_voxel)
 
     output = torch.empty((N, Co), device=feats.device, dtype=feats.dtype)
     for start in range(0, N, CHUNK):
@@ -82,6 +82,7 @@ def sparse_conv3d_forward(self, x: SparseTensor) -> SparseTensor:
         else:
             output[start:end] = torch.mm(chunk_im2col, weight_mat)
 
+    torch.cuda.empty_cache()
     out = x.replace(output)
     return out
 
