@@ -210,4 +210,8 @@ __marimo__/
 tmp/
 
 # upstream files
-TRELLIS.2/
+TRELLIS.2/*
+!TRELLIS.2/
+
+# modding file
+!TRELLIS.2/app_mod.py
