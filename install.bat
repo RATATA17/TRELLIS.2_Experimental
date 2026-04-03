@@ -1,4 +1,4 @@
-﻿@echo off
+@echo off
 
 
 
@@ -13,6 +13,7 @@ echo *** %time% *** Removing inner .git directory
 if exist TRELLIS.2\.git rd /s /q TRELLIS.2\.git
 
 cd /d TRELLIS.2
+if errorlevel 1 goto :error
 
 echo *** %time% *** add app_mod.py
 copy /y ..\app_mod.py .\app_mod.py
