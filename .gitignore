@@ -218,3 +218,6 @@ diff.txt
 
 # VsCode plans
 plans/
+
+# flash_attn_whl
+whl/flash_attn-*.whl
