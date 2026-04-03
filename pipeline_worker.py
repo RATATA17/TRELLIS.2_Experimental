@@ -24,7 +24,17 @@ def _apply_patches():
 
     try:
         import flex_gemm.kernels as _fgk
-        if not hasattr(_fgk, 'triton'):
+        triton_obj = getattr(_fgk, 'triton', None)
+        triton_has_fwd = hasattr(triton_obj, 'indice_weighed_sum_fwd') if triton_obj is not None else False
+        triton_has_bwd = hasattr(triton_obj, 'indice_weighed_sum_bwd_input') if triton_obj is not None else False
+        print(
+            "[WORKER][DIAG] flex_gemm.kernels.triton "
+            f"exists={hasattr(_fgk, 'triton')} "
+            f"is_none={triton_obj is None} "
+            f"has_fwd={triton_has_fwd} has_bwd={triton_has_bwd}"
+        )
+        needs_fallback = (not hasattr(_fgk, 'triton')) or (triton_obj is None) or (not triton_has_fwd) or (not triton_has_bwd)
+        if needs_fallback:
             class _TritonFallback:
                 @staticmethod
                 def indice_weighed_sum_fwd(feats, indices, weights):
@@ -51,6 +61,8 @@ def _apply_patches():
 
             _fgk.triton = _TritonFallback()
             print("[WORKER] flex_gemm Triton fallback patch applied.")
+        else:
+            print("[WORKER][DIAG] Triton fallback skipped because attribute exists.")
     except ImportError:
         print("[WORKER] Could not patch flex_gemm triton fallback.")
     except Exception as e:
@@ -60,7 +72,8 @@ def _apply_patches():
 def _worker_main(cmd_queue, result_queue):
     """Worker process main loop. Owns the pipeline and all GPU resources."""
     os.environ["TORCHDYNAMO_DISABLE"] = "1"
-    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "garbage_collection_threshold:0.65"
+    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True,max_split_size_mb:512,roundup_power2_divisions:16"
+    os.environ['TORCH_CUDNN_V8_API_ENABLED'] = '1'
     os.environ['OPENCV_IO_ENABLE_OPENEXR'] = '1'
 
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

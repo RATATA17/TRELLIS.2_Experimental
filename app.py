@@ -2,6 +2,8 @@
 # app.py
 import os
 os.environ['OPENCV_IO_ENABLE_OPENEXR'] = '1'
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True,max_split_size_mb:512,roundup_power2_divisions:16"
+os.environ['TORCH_CUDNN_V8_API_ENABLED'] = '1'
 
 import gradio as gr
 
@@ -20,6 +22,9 @@ import io
 from pipeline_worker import PipelineWorker
 from trellis2.modules.sparse import SparseTensor
 import torch
+
+torch.backends.cuda.matmul.allow_tf32 = False
+torch.backends.cudnn.allow_tf32 = False
 
 MAX_SEED = np.iinfo(np.int32).max
 TMP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tmp')
@@ -501,7 +506,7 @@ def create_input_panel():
     with gr.Column(scale=1, min_width=360):
         image_prompt = gr.Image(label="Image Prompt", format="png", image_mode="RGBA", type="pil", height=400)
         
-        resolution = gr.Radio(["512", "1024", "1536"], label="Resolution", value="1024")
+        resolution = gr.Radio(["512", "1024", "1536"], label="Resolution", value="512")
         seed = gr.Slider(0, MAX_SEED, label="Seed", value=0, step=1)
         randomize_seed = gr.Checkbox(label="Randomize Seed", value=True)
         decimation_target = gr.Slider(100000, 1000000, label="Decimation Target", value=500000, step=10000)

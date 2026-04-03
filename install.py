@@ -10,6 +10,8 @@ import urllib.request
 import urllib.error
 import socket
 import shutil
+import traceback
+import importlib
 
 MAX_RETRIES = 3
 RETRY_DELAY = 5  # seconds
@@ -18,6 +20,43 @@ REQUIRED_PYTHON = (3, 11) # Matches cp311 wheels
 class InstallationError(Exception):
     """Custom exception for installation failures"""
     pass
+
+
+def patch_flex_gemm_triton_import() -> bool:
+    """Patch flex_gemm kernels init to tolerate missing triton submodule on Windows wheels."""
+    try:
+        site_pkgs = Path(next(p for p in sys.path if p.endswith("site-packages")))
+    except StopIteration:
+        print("[WARN] site-packages path not found; skip flex_gemm patch.")
+        return False
+
+    target = site_pkgs / "flex_gemm" / "kernels" / "__init__.py"
+    if not target.exists():
+        print("[INFO] flex_gemm kernels init not found; skip patch.")
+        return False
+
+    text = target.read_text(encoding="utf-8", errors="ignore")
+    if "from . import triton" not in text:
+        print("[INFO] flex_gemm triton import pattern not found; skip patch.")
+        return False
+
+    if "class _TritonFallback" in text or "try:" in text and "from . import triton" in text:
+        print("[INFO] flex_gemm triton fallback already present.")
+        return False
+
+    patched = text.replace(
+        "from . import triton\nfrom . import cuda\n",
+        "try:\n    from . import triton\nexcept Exception:\n    class _TritonFallback:\n        @staticmethod\n        def indice_weighed_sum_fwd(feats, indices, weights):\n            import torch\n            N = feats.shape[0]\n            idx = indices.long().clamp(min=0, max=N - 1)\n            M_shape, K = idx.shape\n            C = feats.shape[-1]\n            out = torch.zeros((M_shape, C), dtype=feats.dtype, device=feats.device)\n            for i in range(K):\n                out += feats[idx[:, i]] * weights[:, i].unsqueeze(-1)\n            return out\n\n        @staticmethod\n        def indice_weighed_sum_bwd_input(grad_output, indices, weights, N):\n            import torch\n            M, C = grad_output.shape\n            idx = indices.long().clamp(min=0, max=N - 1)\n            weighted_grad = grad_output.unsqueeze(1) * weights.unsqueeze(-1)\n            grad_feats = torch.zeros(N, C, device=grad_output.device, dtype=grad_output.dtype)\n            grad_feats.scatter_add_(0, idx.reshape(-1, 1).expand(-1, C), weighted_grad.reshape(-1, C))\n            return grad_feats\n\n    triton = _TritonFallback()\nfrom . import cuda\n",
+        1,
+    )
+
+    if patched == text:
+        print("[WARN] flex_gemm patch pattern mismatch; no change applied.")
+        return False
+
+    target.write_text(patched, encoding="utf-8")
+    print(f"[INFO] Applied flex_gemm triton fallback patch: {target}")
+    return True
 
 def get_current_script_dir() -> Path:
     """Helper to get the directory of the current script."""
@@ -141,10 +180,25 @@ def install_dependencies():
         # 2. General Dependencies
         print("\n--- Installing General Dependencies ---")
         general_deps = [
-            "imageio", "imageio-ffmpeg", "tqdm", "easydict", "opencv-python-headless",
-            "ninja", "trimesh", "transformers", "gradio==6.0.1", "tensorboard",
-            "pandas", "lpips", "zstandard", "kornia", "timm", 
-            "huggingface_hub", "accelerate", "psutil"
+            "imageio==2.37.3",
+            "imageio-ffmpeg==0.6.0",
+            "tqdm==4.67.3",
+            "easydict==1.13",
+            "opencv-python-headless==4.13.0.92",
+            "ninja==1.13.0",
+            "trimesh==4.11.5",
+            "transformers==4.57.6",
+            "gradio==6.0.1",
+            "tensorboard==2.20.0",
+            "pandas==2.3.3",
+            "lpips==0.1.4",
+            "zstandard==0.25.0",
+            "kornia==0.8.2",
+            "timm==1.0.26",
+            "huggingface_hub==0.36.2",
+            "accelerate==1.13.0",
+            "psutil==7.2.2",
+            "triton-windows==3.5.0.post21",
         ]
         run_command_with_retry(f"pip install {' '.join(general_deps)}", "Installing pip packages")
 
@@ -201,8 +255,28 @@ def install_dependencies():
         for desc, pattern in wheel_patterns.items():
             found = list(whl_dir.glob(pattern))
             if found:
-                # Install the first match found
-                run_command_with_retry(f"pip install {found[0]}", f"Installing {desc} Wheel")
+                # Install the first match found (with FlashAttention-specific selection)
+                selected = found[0]
+                if desc == "Flash Attention":
+                    # Prefer wheel explicitly matching current environment tags in filename.
+                    # Keep torch pinned by avoiding dependency re-resolution.
+                    candidates = sorted(
+                        found,
+                        key=lambda p: (
+                            "torch2.8.0" not in p.name.lower(),
+                            "cp311" not in p.name.lower(),
+                            "win_amd64" not in p.name.lower(),
+                            p.name,
+                        )
+                    )
+                    selected = candidates[0]
+                    print(f"Using FlashAttention local wheel: {selected.name}")
+                    run_command_with_retry(
+                        f"pip install --no-deps {selected}",
+                        "Installing Flash Attention Wheel (local, no-deps)"
+                    )
+                else:
+                    run_command_with_retry(f"pip install {selected}", f"Installing {desc} Wheel")
             else:
                 if desc == "Utils3D":
                     # Fallback to git for utils3d if not compiled
@@ -214,6 +288,9 @@ def install_dependencies():
                 else:
                     print(f"Warning: Wheel for {desc} (pattern: {pattern}) not found in 'whl' folder.")
 
+        # 5. Apply Windows-specific flex_gemm import fallback if needed
+        patch_flex_gemm_triton_import()
+
         print("\nInstallation completed successfully!")
 
     except InstallationError as e:
@@ -223,6 +300,33 @@ def install_dependencies():
         print(f"\nUnexpected error: {str(e)}")
         sys.exit(1)
 
+def verify_module_import(module_name: str, required: bool = True, hint: Optional[str] = None) -> bool:
+    """Import a module and print detailed diagnostics on failure."""
+    try:
+        importlib.import_module(module_name)
+        print(f"[OK] {module_name} detected.")
+        return True
+    except Exception as e:
+        # Auto-recover once for known flex_gemm triton import issue on Windows wheels.
+        if module_name == "flex_gemm" and "cannot import name 'triton'" in str(e):
+            print("[WARN] Detected flex_gemm triton import issue. Trying auto-patch and retry...")
+            if patch_flex_gemm_triton_import():
+                try:
+                    importlib.invalidate_caches()
+                    importlib.import_module(module_name)
+                    print(f"[OK] {module_name} detected after auto-patch.")
+                    return True
+                except Exception as retry_e:
+                    e = retry_e
+
+        level = "ERROR" if required else "WARNING"
+        print(f"[{level}] Failed to import '{module_name}': {e}")
+        if hint:
+            print(f"[{level}] Hint: {hint}")
+        print(f"[{level}] Traceback for '{module_name}':")
+        print(traceback.format_exc())
+        return not required
+
 def verify_installation():
     """Verify installation."""
     try:
@@ -231,18 +335,31 @@ def verify_installation():
         print(f"\nVerification successful.")
         print(f"PyTorch version: {torch.__version__}")
         print(f"CUDA Available: {torch.cuda.is_available()}")
+        verification_ok = True
         
         if torch.cuda.is_available():
             print(f"CUDA version: {torch.version.cuda}")
-            
-            # Verify the compiled extensions
-            modules_to_check = ["nvdiffrast", "o_voxel", "flash_attn"]
-            for mod in modules_to_check:
-                try:
-                    __import__(mod)
-                    print(f"[OK] {mod} detected.")
-                except ImportError:
-                    print(f"[WARNING] {mod} not found.")
+            print("\nChecking compiled modules in dependency order: torch -> flex_gemm -> o_voxel")
+
+            # Required for current Windows wheel stack
+            verification_ok &= verify_module_import(
+                "flex_gemm",
+                required=True,
+                hint="If DLL load fails, check CUDA runtime DLL availability and ensure torch imports first."
+            )
+            verification_ok &= verify_module_import(
+                "o_voxel",
+                required=True,
+                hint="o_voxel depends on flex_gemm; fix flex_gemm import errors first."
+            )
+
+            # Optional accelerators / extensions
+            verify_module_import("nvdiffrast", required=False)
+            verify_module_import(
+                "flash_attn",
+                required=False,
+                hint="If unavailable, set ATTN_BACKEND=sdpa or xformers at runtime."
+            )
 
         # Explicit PIL Check
         try:
@@ -251,8 +368,8 @@ def verify_installation():
         except ImportError:
             print("[ERROR] PIL (Pillow) not found! This is required.")
             return False
-            
-        return True
+
+        return verification_ok
     except ImportError as e:
         print(f"Verification failed: {str(e)}")
         return False

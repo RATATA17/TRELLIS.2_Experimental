@@ -36,11 +36,33 @@ class BiRefNet:
         else:
             print(f"[INFO] Local RMBG-2.0 NOT found. Attempting download/access: {model_name}")
 
-        self.model = AutoModelForImageSegmentation.from_pretrained(
-            target_path, 
+        common_kwargs = dict(
             trust_remote_code=True,
-            local_files_only=use_local # Forces offline mode if local files are found
+            local_files_only=use_local,  # Forces offline mode if local files are found
+            low_cpu_mem_usage=False,     # Avoid meta tensor init path for remote-code models
+            device_map=None,
         )
+
+        try:
+            self.model = AutoModelForImageSegmentation.from_pretrained(
+                target_path,
+                **common_kwargs,
+            )
+        except Exception as e:
+            print(f"[WARN] RMBG load failed on first attempt: {e}")
+            # Retry once with remote fetch enabled to refresh a potentially stale cache
+            # when the first target is a remote repo id.
+            if not use_local:
+                print(f"[INFO] Retrying RMBG load with forced remote fetch: {model_name}")
+                retry_kwargs = dict(common_kwargs)
+                retry_kwargs["local_files_only"] = False
+                retry_kwargs["force_download"] = True
+                self.model = AutoModelForImageSegmentation.from_pretrained(
+                    model_name,
+                    **retry_kwargs,
+                )
+            else:
+                raise
         
         self.model.eval()
         self.transform_image = transforms.Compose(
