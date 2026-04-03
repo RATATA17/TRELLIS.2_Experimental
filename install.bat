@@ -7,15 +7,20 @@ if exist TRELLIS.2\. rd /S /Q TRELLIS.2
 
 echo *** %time% *** Cloning repository
 git clone -b feature/local-tools https://github.com/RATATA17/TRELLIS.2_Experimental.git --recursive TRELLIS.2
+if errorlevel 1 goto :error
+
+echo *** %time% *** Removing inner .git directory
+if exist TRELLIS.2\.git rd /s /q TRELLIS.2\.git
 
 cd /d TRELLIS.2
 
-echo *** %time% *** Removing inner .git directory
-if exist TRELLIS.2\.git rmdir /s /q TRELLIS.2\.git
-
 echo *** %time% *** add app_mod.py
-del ..\app_mod.py
-copy ..\app_mod.py
+copy /y ..\app_mod.py .\app_mod.py
+if errorlevel 1 goto :error
+
+goto :setup
+
+:setup
 
 echo *** %time% *** Creating venv
 python -m venv venv
@@ -100,3 +105,9 @@ echo *** %time% *** Finished TRELLIS.2 install
 echo.
 echo Check the stats for any errors.  Do not assume it worked.
 pause
+
+goto :eof
+
+:error
+echo *** %time% *** ERROR: install failed
+exit /b 1
