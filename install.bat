@@ -6,12 +6,16 @@ echo *** %time% *** Deleting TRELLIS.2 directory if it exists
 if exist TRELLIS.2\. rd /S /Q TRELLIS.2
 
 echo *** %time% *** Cloning repository
-git clone -b main https://github.com/microsoft/TRELLIS.2.git --recursive
-cd TRELLIS.2
+git clone -b local-tools https://github.com/RATATA17/TRELLIS.2_Experimental.git --recursive TRELLIS.2
+
+cd /d TRELLIS.2
 
 echo *** %time% *** Replacing app.py
 del app.py /q
 copy ..\app.py
+
+echo *** %time% *** add app_mod.py
+copy ..\app_mod.py
 
 echo *** %time% *** Creating venv
 python -m venv venv
