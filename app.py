@@ -2,7 +2,15 @@
 # app.py
 import os
 os.environ['OPENCV_IO_ENABLE_OPENEXR'] = '1'
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True,max_split_size_mb:512,roundup_power2_divisions:16"
+
+def _get_cuda_alloc_conf() -> str:
+    base = "max_split_size_mb:512,roundup_power2_divisions:16"
+    # NOTE: expandable_segments is not supported on Windows in current PyTorch builds.
+    if os.name == "nt":
+        return base
+    return f"expandable_segments:True,{base}"
+
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = _get_cuda_alloc_conf()
 os.environ['TORCH_CUDNN_V8_API_ENABLED'] = '1'
 
 import gradio as gr

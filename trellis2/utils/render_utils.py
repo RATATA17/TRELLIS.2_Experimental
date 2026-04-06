@@ -4,11 +4,21 @@ import torch
 import numpy as np
 from tqdm import tqdm
 import utils3d
+import os
 from PIL import Image
 
 from ..renderers import MeshRenderer, VoxelRenderer, PbrMeshRenderer
 from ..representations import Mesh, Voxel, MeshWithPbrMaterial, MeshWithVoxel
+from .log_utils import should_log, log
 from .random_utils import sphere_hammersley_sequence
+
+
+def _diag_enabled() -> bool:
+    return should_log("verbose")
+
+
+def _sync_before_cpu_enabled() -> bool:
+    return os.environ.get("TRELLIS_RENDER_SYNC_BEFORE_CPU", "0") == "1"
 
 
 def yaw_pitch_r_fov_to_extrinsics_intrinsics(yaws, pitchs, rs, fovs):
@@ -69,21 +79,48 @@ def get_renderer(sample, **kwargs):
         renderer.rendering_options.ssaa = kwargs.get('ssaa', 2)
     else:
         raise ValueError(f'Unsupported sample type: {type(sample)}')
+
+    if _diag_enabled():
+        log("verbose", (
+            f"[RENDER][DIAG] get_renderer sample_type={type(sample).__name__} "
+            f"renderer={type(renderer).__name__}"
+        ))
     return renderer
 
 
 def render_frames(sample, extrinsics, intrinsics, options={}, verbose=True, **kwargs):
     renderer = get_renderer(sample, **options)
     rets = {}
+
+    if _diag_enabled():
+        log("verbose", (
+            f"[RENDER][DIAG] render_frames sample_type={type(sample).__name__} "
+            f"renderer={type(renderer).__name__} views={len(extrinsics)}"
+        ))
     
     with torch.inference_mode():
         for j, (extr, intr) in tqdm(enumerate(zip(extrinsics, intrinsics)), total=len(extrinsics), desc='Rendering', disable=not verbose):
+            if _diag_enabled():
+                log("verbose", f"[RENDER][DIAG] view={j} before renderer.render")
             res = renderer.render(sample, extr, intr, **kwargs)
+            if _diag_enabled():
+                log("verbose", f"[RENDER][DIAG] view={j} after renderer.render keys={list(res.keys())}")
             for k, v in res.items():
                 if k not in rets: rets[k] = []
                 if v.dim() == 2: v = v[None].repeat(3, 1, 1)
-                rets[k].append(np.clip(v.cpu().numpy().transpose(1, 2, 0) * 255, 0, 255).astype(np.uint8))
-            
+                if should_log("debug"):
+                    log("debug", f"[RENDER][DIAG] view={j} key={k} before cpu_numpy shape={tuple(v.shape)} dtype={v.dtype} device={v.device}")
+                if _sync_before_cpu_enabled():
+                    torch.cuda.synchronize()
+                    if should_log("debug"):
+                        log("debug", f"[RENDER][DIAG] view={j} key={k} cuda_sync_before_cpu_numpy")
+                arr = v.cpu().numpy()
+                if should_log("debug"):
+                    log("debug", f"[RENDER][DIAG] view={j} key={k} after cpu_numpy shape={arr.shape} dtype={arr.dtype}")
+                rets[k].append(np.clip(arr.transpose(1, 2, 0) * 255, 0, 255).astype(np.uint8))
+                if should_log("debug"):
+                    log("debug", f"[RENDER][DIAG] view={j} key={k} after uint8_convert")
+             
             torch.cuda.empty_cache() 
             
     return rets

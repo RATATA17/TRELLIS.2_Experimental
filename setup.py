@@ -24,7 +24,7 @@ install_requires = [
     # On Windows, pre-built wheels for pillow-simd are usually available.
     'pillow-simd',
     'kornia',
-    'timm',
+    'timm==0.9.16',
     'utils3d @ git+https://github.com/EasternJournalist/utils3d.git@9a4eb15e4021b67b12c460c7057d642626897ec8',
 ]
 

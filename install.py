@@ -194,7 +194,7 @@ def install_dependencies():
             "lpips==0.1.4",
             "zstandard==0.25.0",
             "kornia==0.8.2",
-            "timm==1.0.26",
+            "timm==0.9.16",
             "huggingface_hub==0.36.2",
             "accelerate==1.13.0",
             "psutil==7.2.2",

@@ -1,12 +1,66 @@
 # File: trellis2/renderers/pbr_mesh_renderer.py
 # trellis2/renderers/pbr_mesh_renderer.py
 from typing import *
+import os
 import torch
 from easydict import EasyDict as edict
 import numpy as np
 import utils3d
 from ..representations.mesh import Mesh, MeshWithVoxel, MeshWithPbrMaterial, TextureFilterMode, AlphaMode, TextureWrapMode
+from ..utils.log_utils import should_log, log
 import torch.nn.functional as F
+
+
+def _diag_enabled() -> bool:
+    return should_log("verbose")
+
+
+def _diag_tensor_stats(name: str, t: torch.Tensor):
+    if not _diag_enabled():
+        return
+    try:
+        if not isinstance(t, torch.Tensor):
+            log("verbose", f"[RENDER][DIAG] {name}: not_tensor type={type(t)}")
+            return
+        shape = tuple(t.shape)
+        dtype = str(t.dtype)
+        device = str(t.device)
+        if t.numel() == 0:
+            log("verbose", f"[RENDER][DIAG] {name}: empty shape={shape} dtype={dtype} device={device}")
+            return
+        if t.is_floating_point():
+            finite = torch.isfinite(t).all().item()
+            has_nan = torch.isnan(t).any().item()
+            has_inf = torch.isinf(t).any().item()
+            t_min = float(torch.nan_to_num(t, nan=0.0, posinf=0.0, neginf=0.0).min().item())
+            t_max = float(torch.nan_to_num(t, nan=0.0, posinf=0.0, neginf=0.0).max().item())
+            log("verbose", (
+                f"[RENDER][DIAG] {name}: shape={shape} dtype={dtype} device={device} "
+                f"finite={finite} nan={has_nan} inf={has_inf} min={t_min:.6g} max={t_max:.6g}"
+            ))
+        else:
+            log("verbose", f"[RENDER][DIAG] {name}: shape={shape} dtype={dtype} device={device}")
+    except Exception as e:
+        log("verbose", f"[RENDER][DIAG] {name}: diag_failed err={e}")
+
+
+def _diag_layer_summary(layer_idx: int, rast: torch.Tensor, gb_alpha: torch.Tensor, w: torch.Tensor, shaded: torch.Tensor):
+    if not should_log("debug"):
+        return
+    try:
+        covered = int((rast[0, ..., -1] > 0).sum().item())
+        total = int(rast[0, ..., -1].numel())
+        log("debug", f"[RENDER][DIAG] layer={layer_idx} coverage={covered}/{total}")
+
+        def _is_bad(x: torch.Tensor) -> bool:
+            return x.is_floating_point() and (not torch.isfinite(x).all().item())
+
+        if layer_idx == 0 or _is_bad(gb_alpha) or _is_bad(w) or _is_bad(shaded):
+            _diag_tensor_stats(f"layer{layer_idx}.gb_alpha", gb_alpha)
+            _diag_tensor_stats(f"layer{layer_idx}.w", w)
+            _diag_tensor_stats(f"layer{layer_idx}.shaded_acc", shaded)
+    except Exception as e:
+        log("debug", f"[RENDER][DIAG] layer={layer_idx} summary_failed err={e}")
 
 
 def cube_to_dir(s, x, y):
@@ -322,6 +376,11 @@ class PbrMeshRenderer:
             voxel_coords_with_batch = torch.cat([torch.zeros_like(mesh.coords[..., :1]), mesh.coords], dim=-1)
 
         with dr.DepthPeeler(self.glctx, vertices_clip, faces, (resolution * ssaa, resolution * ssaa)) as peeler:
+            if _diag_enabled():
+                log("verbose", (
+                    f"[RENDER][DIAG] start resolution={resolution} ssaa={ssaa} peel_layers={self.rendering_options['peel_layers']} "
+                    f"verts={mesh.vertices.shape[0]} faces={mesh.faces.shape[0]} envmaps={list(envmap.keys())}"
+                ))
             for _ in range(self.rendering_options["peel_layers"]):
                 rast, rast_db = peeler.rasterize_next_layer()
                 
@@ -479,6 +538,8 @@ class PbrMeshRenderer:
                 max_w = torch.maximum(max_w, w)
                 shaded += w * gb_shaded
                 alpha += w
+
+                _diag_layer_summary(_, rast, gb_alpha, w, shaded)
         
         # Ambient occulusion
         f_occ = screen_space_ambient_occlusion(
@@ -509,5 +570,14 @@ class PbrMeshRenderer:
             shaded_key = f"shaded_{k}" if k != '' else "shaded"
             out_dict[shaded_key] = aces_tonemapping(out_dict[shaded_key])
             out_dict[shaded_key] = gamma_correction(out_dict[shaded_key])
-            
+
+        if _diag_enabled():
+            for k in ["normal", "clay", "base_color"]:
+                if k in out_dict:
+                    _diag_tensor_stats(f"out.{k}", out_dict[k])
+            for k in envmap.keys():
+                shaded_key = f"shaded_{k}" if k != '' else "shaded"
+                if shaded_key in out_dict:
+                    _diag_tensor_stats(f"out.{shaded_key}", out_dict[shaded_key])
+             
         return out_dict
